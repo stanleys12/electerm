@@ -41,6 +41,10 @@ export function quotePosixShellArg (value) {
   return quote + value.replace(/'/g, escapedQuote) + quote
 }
 
+export function isWindowsDrivePath (dir) {
+  return /^[a-zA-Z]:[\\/]/.test(dir)
+}
+
 export function createRestoreCwdCommand (cwd) {
   const safeCwd = sanitizeSshCwd(cwd)
   return safeCwd ? `cd -- ${quotePosixShellArg(safeCwd)}` : ''
@@ -88,7 +92,7 @@ export function createCdCommand (dir, { remote = false, shell = '' } = {}) {
   if (!safeDir) {
     return ''
   }
-  if (!/^[a-zA-Z]:\\/.test(safeDir)) {
+  if (!isWindowsDrivePath(safeDir)) {
     return `cd ${quotePosixShellArg(safeDir)}`
   }
   return remote

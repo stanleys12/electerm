@@ -9,7 +9,7 @@ global.window = {
 
 const loadCommands = () => import('../../client/components/terminal/ssh-reload-state.js')
 
-const startupCommand = async ({ shell, resolvedShell, cwd, reloadCwd, remote = false }) => {
+const startupCommand = async ({ shell, resolvedShell, cwd, reloadCwd, remote = false, remoteShell = 'sh' }) => {
   const { StartupQueue } = await import('../../client/components/terminal/startup-queue.js')
   const sent = []
   const host = {
@@ -21,8 +21,9 @@ const startupCommand = async ({ shell, resolvedShell, cwd, reloadCwd, remote = f
     isLocal: () => !remote,
     isSsh: () => remote
   }
-  const queue = new StartupQueue(host)
+  const queue = new StartupQueue(host, { detectRemoteShell: () => Promise.resolve(remoteShell) })
   queue.runInitScript(resolvedShell)
+  await new Promise(resolve => setImmediate(resolve))
   queue.dispose()
   assert.equal(sent.length, 1)
   return sent[0]
@@ -106,6 +107,31 @@ describe('Windows startup directory', () => {
     assert.equal(
       await startupCommand({ shell: 'powershell.exe', cwd: '/srv/work folder', remote: true }),
       "cd -- '/srv/work folder'\r"
+    )
+  })
+
+  test('uses CMD drive switching for a Windows path on a remote tab', async () => {
+    assert.equal(
+      await startupCommand({ shell: 'powershell.exe', cwd: 'C:/', remote: true }),
+      'cd /d "C:/"\r'
+    )
+    assert.equal(
+      await startupCommand({ shell: 'powershell.exe', cwd: 'D:\\work folder', remote: true }),
+      'cd /d "D:\\work folder"\r'
+    )
+  })
+
+  test('keeps POSIX syntax for a Windows path when the remote shell is bash', async () => {
+    assert.equal(
+      await startupCommand({ shell: 'powershell.exe', cwd: 'C:/', remote: true, remoteShell: 'bash' }),
+      "cd -- 'C:/'\r"
+    )
+  })
+
+  test('keeps POSIX syntax for a POSIX path on a remote tab', async () => {
+    assert.equal(
+      await startupCommand({ shell: 'powershell.exe', cwd: '/home/u', remote: true }),
+      "cd -- '/home/u'\r"
     )
   })
 

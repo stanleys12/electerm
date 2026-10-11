@@ -23,8 +23,10 @@ import {
   detectShellType
 } from './shell.js'
 import {
+  createCdCommand,
   createRestoreCwdCommand,
   createWindowsRestoreCwdCommand,
+  isWindowsDrivePath,
   isRestorableTerminalTab
 } from './ssh-reload-state.js'
 import { isMac, isWin } from '../../common/platform.js'
@@ -160,9 +162,13 @@ export class StartupQueue {
       // refuse (control characters, over-long), and interpolating the raw value
       // instead would hand `startDirectory` - which a quick-connect link can
       // set - straight to the shell as a command.
-      cwdCommand = this.isPosixShell()
-        ? createRestoreCwdCommand(startFolder)
-        : createWindowsRestoreCwdCommand(startFolder, localShell || term.props.config.execWindows)
+      if (this.isRemoteShell() && isWindowsDrivePath(startFolder)) {
+        cwdCommand = () => this.createRemoteWindowsCdCommand(startFolder)
+      } else {
+        cwdCommand = this.isPosixShell()
+          ? createRestoreCwdCommand(startFolder)
+          : createWindowsRestoreCwdCommand(startFolder, localShell || term.props.config.execWindows)
+      }
     }
     if (cwdCommand) {
       scripts.unshift({ script: cwdCommand, delay: 0 })
@@ -183,14 +189,14 @@ export class StartupQueue {
     scripts.forEach((script, i) => {
       this.queue.push({
         type: 'delayed_script',
-        script: script.script,
         delay: script.delay || 0,
         // Nothing follows the last one, so waiting for the shell to settle
         // would only add latency.
         isLast: i === scripts.length - 1,
-        execute: () => {
-          if (script.script && this.addon) {
-            this.addon._sendData(script.script + '\r')
+        execute: async () => {
+          const command = typeof script.script === 'function' ? await script.script() : script.script
+          if (command && this.addon) {
+            this.addon._sendData(command + '\r')
           }
         }
       })
@@ -271,7 +277,7 @@ export class StartupQueue {
     if (item.type !== 'delayed_script') {
       return
     }
-    item.execute()
+    await item.execute()
     if (item.isLast) {
       return
     }
@@ -336,6 +342,23 @@ export class StartupQueue {
     )
   }
 
+  probeRemoteShell = () => {
+    let timer
+    return Promise.race([
+      this.detectRemoteShell(this.term.pid),
+      new Promise(resolve => {
+        timer = setTimeout(() => resolve('sh'), remoteShellDetectTimeoutMs)
+      })
+    ]).finally(() => clearTimeout(timer))
+  }
+
+  createRemoteWindowsCdCommand = async (dir) => {
+    const shellType = this.shellType || await this.probeRemoteShell()
+    return shellType === 'sh'
+      ? createCdCommand(dir, { remote: true })
+      : createRestoreCwdCommand(dir)
+  }
+
   /**
    * Inject shell integration commands from client-side.
    * Replaces the server-side `source xxx.xxx` approach; output suppression
@@ -358,12 +381,7 @@ export class StartupQueue {
       const localShell = isMac ? config.execMac : config.execLinux
       shellType = detectShellType(localShell || '')
     } else if (this.isRemoteShell()) {
-      shellType = await Promise.race([
-        this.detectRemoteShell(this.term.pid),
-        new Promise(resolve => {
-          setTimeout(() => resolve('sh'), remoteShellDetectTimeoutMs)
-        })
-      ])
+      shellType = await this.probeRemoteShell()
     }
 
     this.shellType = shellType

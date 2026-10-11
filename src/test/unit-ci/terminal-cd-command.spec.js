@@ -34,6 +34,7 @@ describe('terminal cd command', () => {
       createCdCommand('C:\\work folder', { remote: true, shell: 'pwsh.exe' }),
       'cd /d "C:\\work folder"'
     )
+    assert.equal(createCdCommand('C:/', { remote: true }), 'cd /d "C:/"')
   })
 
   test('single-quotes a POSIX path so the shell cannot expand it', async () => {
